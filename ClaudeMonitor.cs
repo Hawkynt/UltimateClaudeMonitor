@@ -37,17 +37,18 @@
 
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Management;
 using System.Runtime.InteropServices;
-using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
+using Microsoft.VisualBasic.ApplicationServices;
 using StreamReader = System.IO.StreamReader;
 
 public sealed class __Program__ {
@@ -55,6 +56,7 @@ public sealed class __Program__ {
   static readonly TimeSpan DISPLAY_UPDATE = TimeSpan.FromSeconds(1);
   static readonly TimeSpan BREAK_INTERVAL = TimeSpan.FromMilliseconds(100);
   const double INPUT_COST_PER_1K = 0.003, OUTPUT_COST_PER_1K = 0.015;
+  private const uint TOKEN_LIMIT_PER_WINDOW = 150000;
 
   const string RESET = "\u001b[0m", RED = "\u001b[31m", GREEN = "\u001b[32m", YELLOW = "\u001b[33m";
   const string BLUE = "\u001b[34m", MAGENTA = "\u001b[35m", CYAN = "\u001b[36m", WHITE = "\u001b[37m", GRAY = "\u001b[90m";
@@ -82,7 +84,7 @@ public sealed class __Program__ {
 
   // info you can parse from .claude.json/oauthAccount
   public sealed class AnthropicAccount(string? uuid, string? emailAdress) {
-    private static readonly TimeSpan WindowLength = TimeSpan.FromHours(5);
+    public static TimeSpan WindowLength = TimeSpan.FromHours(5);
 
     // Confidence of our inferred window start.
     private enum ConfidenceLevel {
@@ -131,7 +133,7 @@ public sealed class __Program__ {
 
     public void IncomingMessage(DateTime when) {
       // Ignore out-of-order observations.
-      if (this.LastKnownMessage == null && when < this.LastKnownMessage)
+      if (this.LastKnownMessage != null && when < this.LastKnownMessage)
         return;
 
       this.LastKnownMessage = when;
@@ -180,8 +182,9 @@ public sealed class __Program__ {
     public AnthropicAccount Account { get; set; } = account;
     public DateTime SessionStart => sessionStart;
     public DateTime? LastKnownMessage { get; private set; }
+    public DateTime? LastParsedTimestamp { get; set; }
 
-    private readonly HashSet<string> _usedModels = new();
+    public readonly HashSet<string> _usedModels = new();
     public IEnumerable<string> UsedModels => this._usedModels;
     public uint TotalInputTokens { get; set; }
     public uint TotalOutputTokens { get; set; }
@@ -717,27 +720,155 @@ public sealed class __Program__ {
   }
 
 
-  static FileInfo? GetMostRecentJsonlForProcess(DirectoryInfo configPath, ClaudeProcess process) {
+  static FileInfo[] GetAllJsonlFilesForProcess(DirectoryInfo configPath) {
     try {
       DirectoryInfo projectsPath = new(Path.Combine(configPath.FullName, "projects"));
       if (!projectsPath.Exists)
-        return null;
+        return [];
 
       return projectsPath.GetFiles("*.jsonl", SearchOption.AllDirectories)
-        .OrderByDescending(f=>f.LastWriteTime)
-        .FirstOrDefault();
+        .OrderByDescending(f => f.LastWriteTime)
+        .Take(2)
+        .ToArray();
     } catch {
-      return null;
+      return [];
     }
   }
 
-  static void ParseJsonlFile(FileInfo file, ClaudeProcess associatedProcess) {
-    var content = SafeReadAllText(file);
-    if (content == null)
+  static void ParseJsonlFilesForProcess(ClaudeProcess process) {
+    var jsonlFiles = GetAllJsonlFilesForProcess(new DirectoryInfo(process.ConfigPath));
+    var session = process.Session;
+    var cwdExtracted = process.WorkingDirectory != null;
+
+    foreach (var file in jsonlFiles) {
+      var content = SafeReadAllText(file);
+      if (content == null)
+        continue;
+
+      var lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+      foreach (var line in lines) {
+        if (string.IsNullOrWhiteSpace(line))
+          continue;
+
+        try {
+          using var doc = JsonDocument.Parse(line);
+
+          // 2 message types: from user and from ai
+          //"{"parentUuid":null,"isSidechain":false,"userType":"external","cwd":"F:\\...\\Cipher","sessionId":"6151b6fd-...9a","version":"1.0.89","gitBranch":"NewFramework","type":"user","message":{"role":"user","content":"g...do"},"uuid":"42681ba2 - ...a94","timestamp":"2025 - 08 - 24T18:20:02.481Z"}"
+          //"{"parentUuid":"4268...a94","isSidechain":false,"userType":"external","cwd":"F:\\...\\Cipher","sessionId":"6151b6fd-...9a","version":"1.0.89","gitBranch":"NewFramework","message":{"id":"msg_01HPiGsNaZuS8TZRMkhqaRE9","type":"message","role":"assistant","model":"claude-sonnet-4-20250514","content":[{"type":"text","text":"I'...d."}],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":21300,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":21300,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard"}},"requestId":"req_011CSSznTkL6NzoeUM2nesuD","type":"assistant","uuid":"6e72994c-...93","timestamp":"2025-08-24T18:20:05.985Z"}"
+
+          var root = doc.RootElement;
+
+          // Extract timestamp first - we need it for session filtering
+          if (!root.TryGetProperty("timestamp", out var timestampProp) ||
+              !DateTime.TryParse(timestampProp.GetString(), out var messageTime))
+            continue;
+
+          // Skip messages from before this process started (they belong to other sessions)
+          if (messageTime < process.StartTime)
+            continue;
+
+          // Skip messages we've already processed
+          if (session.LastParsedTimestamp.HasValue && messageTime <= session.LastParsedTimestamp.Value)
+            continue;
+
+          // Extract working directory from cwd field
+          if (!cwdExtracted && root.TryGetProperty("cwd", out var cwdProp)) {
+            var cwd = cwdProp.GetString();
+            if (!string.IsNullOrEmpty(cwd)) {
+              DirectoryInfo dir = new(cwd);
+              if (dir.Exists) {
+                process.WorkingDirectory = dir;
+                cwdExtracted = true;
+              }
+            }
+          }
+
+          // Update account tracking with this message
+          session.IncomingMessage(messageTime);
+          
+          // Look for usage data in message.usage (Claude's JSONL format)
+          if (root.TryGetProperty("message", out var messageProp)) {
+            
+            // Extract model name from message
+            var model = "unknown";
+            if (messageProp.TryGetProperty("model", out var modelProp))
+              model = modelProp.GetString() ?? "unknown";
+
+            // Look for usage data in message.usage
+            if (messageProp.TryGetProperty("usage", out var usageProp)) {
+              var inputTokens = usageProp.TryGetProperty("input_tokens", out var inputProp) ? inputProp.GetUInt32() : 0;
+              var outputTokens = usageProp.TryGetProperty("output_tokens", out var outputProp) ? outputProp.GetUInt32() : 0;
+              var cacheCreation = usageProp.TryGetProperty("cache_creation_input_tokens", out var cacheProp) ? cacheProp.GetUInt32() : 0;
+              var cacheRead = usageProp.TryGetProperty("cache_read_input_tokens", out var cacheReadProp) ? cacheReadProp.GetUInt32() : 0;
+
+              // Only process if we have valid token counts
+              if (inputTokens > 0 || outputTokens > 0) {
+                session._usedModels.Add(model);
+                session.TotalInputTokens += inputTokens;
+                session.TotalOutputTokens += outputTokens;
+
+                var cost = (inputTokens + cacheCreation) * (float)INPUT_COST_PER_1K / 1000.0f + outputTokens * (float)OUTPUT_COST_PER_1K / 1000.0f;
+                session.TotalCost += cost;
+              }
+            }
+          }
+
+          // Check for rate limit messages
+          if (root.TryGetProperty("message", out var msgProp) &&
+              msgProp.TryGetProperty("content", out var contentProp)) {
+            
+            var text = contentProp.GetString() ?? "";
+            var rateLimitPattern = @"(\d+)-hour\s+limit\s+reached.*?resets\s+(\d+)(am|pm)";
+            var match = Regex.Match(text, rateLimitPattern, RegexOptions.IgnoreCase);
+            
+            if (match.Success) {
+              var limitHours = int.Parse(match.Groups[1].Value);
+              AnthropicAccount.WindowLength=TimeSpan.FromHours(limitHours);
+
+              var resetHour = int.Parse(match.Groups[2].Value);
+              var isPM = match.Groups[3].Value.ToLower() == "pm";
+
+              // Convert to 24-hour format
+              switch (isPM) {
+                case true when resetHour != 12:
+                  resetHour += 12;
+                  break;
+                case false when resetHour == 12:
+                  resetHour = 0;
+                  break;
+              }
+              
+              // Calculate reset time
+              var resetTime = new DateTime(messageTime.Year, messageTime.Month, messageTime.Day, resetHour, 0, 0);
+              if (resetTime <= messageTime)
+                resetTime = resetTime.AddDays(1);
+              
+              session.Account.IncomingRateLimit(resetTime);
+            }
+          }
+
+          // Update the last parsed timestamp
+          session.LastParsedTimestamp = messageTime;
+          
+        } catch {
+          // Continue processing other lines even if one line has invalid JSON
+        }
+      }
+    }
+
+    // Update burn rate calculations after parsing all data
+    var sessionDuration = (DateTime.Now - session.SessionStart).TotalMinutes;
+    if (!(sessionDuration > 0))
       return;
 
-    // TODO: parse into JSON, refresh associatedProcess and its stats and maybe even its account
+    session.BurnRateTokensPerMinute = (session.TotalInputTokens + session.TotalOutputTokens) / (float)sessionDuration;
+    if (!(session.BurnRateTokensPerMinute > 0))
+      return;
 
+    var remainingMinutes = (TOKEN_LIMIT_PER_WINDOW - (session.TotalInputTokens + session.TotalOutputTokens)) / session.BurnRateTokensPerMinute;
+    if (remainingMinutes > 0)
+      session.ProjectedTotalCost = session.TotalCost + remainingMinutes * session.BurnRateTokensPerMinute * (float)OUTPUT_COST_PER_1K / 1000.0f;
   }
 
   /*
@@ -884,8 +1015,8 @@ static string GenerateUsageText(SessionInfo session, DateTime currentTime) {
       ++instanceNumber;
     }
 
-    var totalCost = 0;
-    var totalTokens = 0;
+    var totalCost = claudeProcesses.Sum(p => p.Session.TotalCost);
+    var totalTokens = claudeProcesses.Sum(p => p.Session.TotalInputTokens + p.Session.TotalOutputTokens);
     var totalRequests = 0;
     var discoveredConfigs = claudeProcesses.Select(c => c.ConfigPath).Distinct().Count();
     var totalContinues = claudeProcesses.Sum(s => s.NumberOfContinuesSent);
@@ -1017,6 +1148,10 @@ static string GenerateUsageText(SessionInfo session, DateTime currentTime) {
 
       var currentTime = DateTime.Now;
       var claudeProcesses = _activeProcesses;
+      
+      // Update statistics for all processes
+      foreach (var process in claudeProcesses.Values)
+        ParseJsonlFilesForProcess(process);
       
       // Send continue when it's time
       foreach (var process in claudeProcesses.Values) {
