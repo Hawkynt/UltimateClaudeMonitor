@@ -1,6 +1,7 @@
 # Ultimate Claude Background Monitor
 # Monitors Claude instances, handles rate limits, sends auto-continue, tracks costs and tokens
 # Run with: Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process; .\claude-ultimate-monitor.ps1
+# This is basically .Net Core 9 C# code wrapped in a PowerShell loader.
 
 # Add required assemblies
 Add-Type -AssemblyName System.Windows.Forms
@@ -20,28 +21,24 @@ Add-Type -ReferencedAssemblies @(
     "System.Collections",
     "System.Core",
     "System",
-    "System.Console",
-    "System.Threading",
-    "System.Threading.Thread",
+    "System.Threading.Tasks",
     "System.Diagnostics.Process",
     "System.Text.RegularExpressions",
-    "System.ComponentModel.Primitives",
     "System.Linq",
-    "System.Text.Encoding",
-    "System.Text.Json",
-    "System.Memory",
     "System.Console",
+    "System.Threading.Thread",
+    "System.ComponentModel.Primitives",
     "mscorlib"
 ) -TypeDefinition @"
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Management;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
@@ -55,30 +52,30 @@ public sealed class $className {
     const string BRIGHT_BLUE = "\u001b[94m", BRIGHT_MAGENTA = "\u001b[95m", BRIGHT_CYAN = "\u001b[96m", BRIGHT_WHITE = "\u001b[97m";
     const double INPUT_COST_PER_1K = 0.003, OUTPUT_COST_PER_1K = 0.015;
     
-    static readonly Dictionary<string, string> emojisUnicode = new() {
-        ["check"] = "\u2713", ["cross"] = "\u2717", ["warning"] = "\u26A0", ["info"] = "\u2139",
-        ["clock"] = "\u23F0", ["gear"] = "\u2699", ["rocket"] = "\uD83D\uDE80", ["fire"] = "\uD83D\uDD25",
-        ["computer"] = "\uD83D\uDCBB", ["robot"] = "\uD83E\uDD16", ["money"] = "\uD83D\uDCB0", ["chart"] = "\uD83D\uDCCA",
-        ["hourglass"] = "\u23F3", ["lightning"] = "\u26A1", ["circle"] = "\u25CB", ["dot"] = "\u2022",
-        ["arrow"] = "\u25B6", ["star"] = "\u2B50", ["target"] = "\uD83C\uDFAF"
+    static readonly Dictionary<string, string> emojisUnicode = new Dictionary<string, string> {
+        {"check", "\u2713"}, {"cross", "\u2717"}, {"warning", "\u26A0"}, {"info", "\u2139"},
+        {"clock", "\u23F0"}, {"gear", "\u2699"}, {"rocket", "\uD83D\uDE80"}, {"fire", "\uD83D\uDD25"},
+        {"computer", "\uD83D\uDCBB"}, {"robot", "\uD83E\uDD16"}, {"money", "\uD83D\uDCB0"}, {"chart", "\uD83D\uDCCA"},
+        {"hourglass", "\u23F3"}, {"lightning", "\u26A1"}, {"circle", "\u25CB"}, {"dot", "\u2022"},
+        {"arrow", "\u25B6"}, {"star", "\u2B50"}, {"target", "\uD83C\uDFAF"}
     };
     
-    static readonly Dictionary<string, string> emojisAscii = new() {
-        ["check"] = "[+]", ["cross"] = "[X]", ["warning"] = "[!]", ["info"] = "[i]",
-        ["clock"] = "[T]", ["gear"] = "[*]",
-        ["rocket"] = "[^]", ["fire"] = "[F]", ["computer"] = "[C]", ["robot"] = "[R]",
-        ["money"] = "[$]", ["chart"] = "[#]", ["hourglass"] = "[H]", ["lightning"] = "[L]",
-        ["circle"] = "[O]", ["dot"] = "[.]", ["arrow"] = "[>]", ["star"] = "[*]", ["target"] = "[@]"
+    static readonly Dictionary<string, string> emojisAscii = new Dictionary<string, string> {
+        {"check", "[+]"}, {"cross", "[X]"}, {"warning", "[!]"}, {"info", "[i]"},
+        {"clock", "[T]"}, {"gear", "[*]"},
+        {"rocket", "[^]"}, {"fire", "[F]"}, {"computer", "[C]"}, {"robot", "[R]"},
+        {"money", "[$]"}, {"chart", "[#]"}, {"hourglass", "[H]"}, {"lightning", "[L]"},
+        {"circle", "[O]"}, {"dot", "[.]"}, {"arrow", "[>]"}, {"star", "[*]"}, {"target", "[@]"}
     };
     
     static bool? ansiSupported, unicodeSupported;
     static bool running = true;
-    static readonly Dictionary<string, SessionStats> sessionStats = new();
-    static readonly Dictionary<string, DateTime> lastContinueSent = new();
-    static readonly Dictionary<string, ConfigInfo> discoveredConfigs = new();
-    static readonly Dictionary<string, RateLimitState> rateLimitStates = new();
+    static readonly Dictionary<string, SessionStats> sessionStats = new Dictionary<string, SessionStats>();
+    static readonly Dictionary<string, DateTime> lastContinueSent = new Dictionary<string, DateTime>();
+    static readonly Dictionary<string, ConfigInfo> discoveredConfigs = new Dictionary<string, ConfigInfo>();
+    static readonly Dictionary<string, RateLimitState> rateLimitStates = new Dictionary<string, RateLimitState>();
 
-    public record SessionStats {
+    public class SessionStats {
         public int TotalRequests { get; set; }
         public int TotalInputTokens { get; set; }
         public int TotalOutputTokens { get; set; }
@@ -92,18 +89,36 @@ public sealed class $className {
         public DateTime? LastContinueSent { get; set; }
         public double BurnRateTokensPerMinute { get; set; }
         public double BurnRateCostPerHour { get; set; }
-        public List<BurnRateEntry> BurnRateHistory { get; set; } = new();
+        public List<BurnRateEntry> BurnRateHistory { get; set; }
         public double ProjectedTotalCost { get; set; }
         public int ProjectedTotalTokens { get; set; }
-        public string WorkingDirectory { get; set; } = "";
-        public string CurrentProject { get; set; } = "";
-        public Dictionary<string, ModelUsage> ModelBreakdown { get; set; } = new();
-        public string WarningLevel { get; set; } = "OK";
+        public string WorkingDirectory { get; set; }
+        public string CurrentProject { get; set; }
+        public Dictionary<string, ModelUsage> ModelBreakdown { get; set; }
+        public string WarningLevel { get; set; }
+        
+        public SessionStats() {
+            BurnRateHistory = new List<BurnRateEntry>();
+            WorkingDirectory = "";
+            CurrentProject = "";
+            ModelBreakdown = new Dictionary<string, ModelUsage>();
+            WarningLevel = "OK";
+        }
     }
 
-    public record BurnRateEntry(DateTime Timestamp, double TokensPerMinute, double CostPerHour);
+    public class BurnRateEntry {
+        public DateTime Timestamp { get; set; }
+        public double TokensPerMinute { get; set; }
+        public double CostPerHour { get; set; }
+        
+        public BurnRateEntry(DateTime timestamp, double tokensPerMinute, double costPerHour) {
+            Timestamp = timestamp;
+            TokensPerMinute = tokensPerMinute;
+            CostPerHour = costPerHour;
+        }
+    }
     
-    public record ModelUsage {
+    public class ModelUsage {
         public int InputTokens { get; set; }
         public int OutputTokens { get; set; }
         public int CacheCreation { get; set; }
@@ -112,21 +127,49 @@ public sealed class $className {
         public double TotalCost { get; set; }
     }
 
-    public record ConfigInfo(string Name, string Color, string Path);
+    public class ConfigInfo {
+        public string Name { get; set; }
+        public string Color { get; set; }
+        public string Path { get; set; }
+        
+        public ConfigInfo(string name, string color, string path) {
+            Name = name;
+            Color = color;
+            Path = path;
+        }
+    }
 
-    public record RateLimitState {
+    public class RateLimitState {
         public bool IsRateLimited { get; set; }
         public DateTime? ResetTime { get; set; }
         public int? RateLimitHours { get; set; }
         public DateTime? LastRateLimitTime { get; set; }
-        public string RateLimitMessage { get; set; } = "";
+        public string RateLimitMessage { get; set; }
         public DateTime? LastLogActivity { get; set; }
+        
+        public RateLimitState() {
+            RateLimitMessage = "";
+        }
+    }
+    
+    public class RateLimitCheckResult {
+        public bool IsRateLimited { get; set; }
+        public DateTime? ResetTime { get; set; }
+        public string Message { get; set; }
+        public int? RateLimitHours { get; set; }
+        
+        public RateLimitCheckResult(bool isRateLimited, DateTime? resetTime, string message, int? rateLimitHours) {
+            IsRateLimited = isRateLimited;
+            ResetTime = resetTime;
+            Message = message;
+            RateLimitHours = rateLimitHours;
+        }
     }
 
     public class AnthropicAccount {
       private DateTime _currentWindowStart;
       public DateTime CurrentWindowStart { 
-        get => this._currentWindowStart;
+        get { return this._currentWindowStart; }
         set {
           this._currentWindowStart = value;
           this._CheckSchedule();
@@ -135,56 +178,70 @@ public sealed class $className {
       
       private bool _isRateLimited;
       public bool IsRateLimited {
-        get => this._isRateLimited;
+        get { return this._isRateLimited; }
         set {
           this._isRateLimited = value;
           this._CheckSchedule();
         }
       }
       
-      public DateTime CurrentWindowEnd => CurrentWindowStart.AddHours(5);
-      public DateTime? NextContinueEvent { get; private set; }
+      public DateTime CurrentWindowEnd { get { return CurrentWindowStart.AddHours(5); } }
+      private DateTime? _nextContinueEvent;
+      public DateTime? NextContinueEvent { get { return this._nextContinueEvent; } private set { this._nextContinueEvent = value; } }
       
       private void _CheckSchedule() {
         if(!this._isRateLimited) {
-          this.NextContinueEvent = null;
+          this._nextContinueEvent = null;
           return;
         }
         
-        this.NextContinueEvent = this.CurrentWindowEnd.AddMinutes(1).AddSeconds(Random.Shared.NextInt(0,60));
+        this._nextContinueEvent = this.CurrentWindowEnd.AddMinutes(1).AddSeconds(new Random().Next(0,60));
       }
       
-      private readonly List<SessionStats> _openSessions = new();
-      public IList<SessionStats> OpenSessions => this._openSessions;
+      private readonly List<SessionStats> _openSessions = new List<SessionStats>();
+      public IList<SessionStats> OpenSessions { get { return this._openSessions; } }
       
     }
 
-    public record ClaudeProcess {
+    public class ClaudeProcess {
         public int ProcessId { get; set; }
-        public string ProcessName { get; set; } = "";
-        public string CommandLine { get; set; } = "";
+        public string ProcessName { get; set; }
+        public string CommandLine { get; set; }
         public DateTime StartTime { get; set; }
         public double WorkingSet { get; set; }
-        public string ConfigPath { get; set; } = "";
-        public string WorkingDirectory { get; set; } = "";
-        public string ProjectName { get; set; } = "";
+        public string ConfigPath { get; set; }
+        public string WorkingDirectory { get; set; }
+        public string ProjectName { get; set; }
         public IntPtr? ConsoleHandle { get; set; }
         public bool HasConsoleWindow { get; set; }
-        public string DetectionReason { get; set; } = "";
-        public AnthropicAccount { get;set; }
+        public string DetectionReason { get; set; }
+        public AnthropicAccount Account { get; set; }
+        
+        public ClaudeProcess() {
+            ProcessName = "";
+            CommandLine = "";
+            ConfigPath = "";
+            WorkingDirectory = "";
+            ProjectName = "";
+            DetectionReason = "";
+        }
     }
 
-    public record StatusInfo {
+    public class StatusInfo {
         public bool IsRateLimited { get; set; }
         public DateTime? LastRateLimitTime { get; set; }
         public DateTime? ResetTime { get; set; }
         public int? RateLimitHours { get; set; }  // Store the hour duration from rate limit message
         public DateTime? RecentActivity { get; set; }
-        public string RateLimitMessage { get; set; } = "";
+        public string RateLimitMessage { get; set; }
         public int NewTokensThisCheck { get; set; }
         public int NewRequestsThisCheck { get; set; }
         public bool ApproachingRateLimit { get; set; }
         public SessionStats Statistics { get; set; }
+        
+        public StatusInfo() {
+            RateLimitMessage = "";
+        }
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -301,12 +358,12 @@ public sealed class $className {
     const uint PROCESS_QUERY_INFORMATION = 0x0400, PROCESS_VM_READ = 0x0010;
 
     static void WriteAnsi(string text) {
-        unicodeSupported ??= GetUnicodeSupport();
+        unicodeSupported = unicodeSupported ?? GetUnicodeSupport();
         var emojiSet = unicodeSupported == true ? emojisUnicode : emojisAscii;
         foreach (var emoji in emojiSet)
-            text = text.Replace($":{emoji.Key}:", emoji.Value);
+            text = text.Replace(":" + emoji.Key + ":", emoji.Value);
 
-        ansiSupported ??= GetAnsiSupport();
+        ansiSupported = ansiSupported ?? GetAnsiSupport();
         if (ansiSupported == false)
             text = StripAnsiAndApplyColors(text);
         Console.Write(text);
@@ -315,7 +372,7 @@ public sealed class $className {
     static bool GetUnicodeSupport() {
         try {
             var encoding = Console.OutputEncoding;
-            return encoding.CodePage is 65001 or 1200 or 1201 ||
+            return encoding.CodePage == 65001 || encoding.CodePage == 1200 || encoding.CodePage == 1201 ||
                    encoding.EncodingName.Contains("Unicode") ||
                    encoding.EncodingName.Contains("UTF");
         } catch { return false; }
@@ -331,13 +388,21 @@ public sealed class $className {
     }
 
     static string StripAnsiAndApplyColors(string text) {
-        var colorMap = new Dictionary<string, ConsoleColor> {
-            [GREEN] = ConsoleColor.Green, [RED] = ConsoleColor.Red, [YELLOW] = ConsoleColor.Yellow,
-            [BLUE] = ConsoleColor.Blue, [MAGENTA] = ConsoleColor.Magenta, [CYAN] = ConsoleColor.Cyan,
-            [WHITE] = ConsoleColor.White, [GRAY] = ConsoleColor.DarkGray,
-            [BRIGHT_GREEN] = ConsoleColor.Green, [BRIGHT_RED] = ConsoleColor.Red,
-            [BRIGHT_YELLOW] = ConsoleColor.Yellow, [BRIGHT_BLUE] = ConsoleColor.Blue,
-            [BRIGHT_MAGENTA] = ConsoleColor.Magenta, [BRIGHT_CYAN] = ConsoleColor.Cyan
+        Dictionary<string, ConsoleColor> colorMap = new() {
+            [GREEN]          = ConsoleColor.Green, 
+            [RED]            = ConsoleColor.Red, 
+            [YELLOW]         = ConsoleColor.Yellow,
+            [BLUE]           = ConsoleColor.Blue, 
+            [MAGENTA]        = ConsoleColor.Magenta, 
+            [CYAN]           = ConsoleColor.Cyan,
+            [WHITE]          = ConsoleColor.White, 
+            [GRAY]           = ConsoleColor.DarkGray,
+            [BRIGHT_GREEN]   = ConsoleColor.Green,
+            [BRIGHT_RED]     = ConsoleColor.Red,
+            [BRIGHT_YELLOW]  = ConsoleColor.Yellow,
+            [BRIGHT_BLUE]    = ConsoleColor.Blue,
+            [BRIGHT_MAGENTA] = ConsoleColor.Magenta,
+            [BRIGHT_CYAN]    = ConsoleColor.Cyan
         };
 
         var result = new StringBuilder();
@@ -364,6 +429,7 @@ public sealed class $className {
                     Console.ResetColor();
                 else if (colorMap.TryGetValue(nextColor, out var color))
                     Console.ForegroundColor = color;
+
                 currentPos = nextColorPos + nextColor.Length;
             } else break;
         }
@@ -371,7 +437,7 @@ public sealed class $className {
         return Regex.Replace(result.ToString(), @"\u001b\[[0-9;]*m", "");
     }
 
-    static void WriteLineAnsi(string text) => WriteAnsi(text + "\n");
+    static void WriteLineAnsi(string text) { WriteAnsi(text + "\n"); }
     
     public static void RunMonitor() {
         Console.OutputEncoding = Encoding.UTF8;
@@ -385,7 +451,7 @@ public sealed class $className {
             e.Cancel = true;
             running = false;
             Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine("\\nShutting down Ultimate Claude Monitor...");
+            Console.WriteLine("\nShutting down Ultimate Claude Monitor...");
             Console.ResetColor();
         };
         
@@ -396,15 +462,16 @@ public sealed class $className {
                 var processStatuses = new Dictionary<string, StatusInfo>();
                 
                 foreach (var process in claudeProcesses) {
-                    var processKey = $"Process_{process.ProcessId}";
+                    var processKey = "Process_" + process.ProcessId;
                     var status = UpdateProcessStats(process);
                     if (status != null)
                         processStatuses[processKey] = status;
                 }
                 
                 foreach (var process in claudeProcesses) {
-                    var processKey = $"Process_{process.ProcessId}";
-                    if (!processStatuses.TryGetValue(processKey, out var status)) continue;
+                    var processKey = "Process_" + process.ProcessId;
+                    if (!processStatuses.TryGetValue(processKey, out var status))
+                      continue;
                     
                     if (status.IsRateLimited && status.ResetTime.HasValue) {
                         var timeUntilReset = (status.ResetTime.Value - currentTime).TotalMinutes;
@@ -426,7 +493,7 @@ public sealed class $className {
                 for (int i = 0; i < CHECK_INTERVAL_SECONDS && running; ++i)
                     Thread.Sleep(1000);
             } catch (Exception ex) {
-                Console.WriteLine($"Error in main loop: {ex.Message}");
+                Console.WriteLine("Error in main loop: " + ex.Message);
                 Thread.Sleep(5000);
             }
         }
@@ -444,7 +511,7 @@ public sealed class $className {
             var hoursFromSessionStart = trueWindowStart.Subtract(sessionStart).TotalHours;
             var blockNumber = Math.Max(0, (int)Math.Floor(hoursFromSessionStart / 5.0));
             
-            return new() {
+            return new SessionWindow {
                 WindowStart = trueWindowStart,
                 WindowEnd = trueWindowEnd,
                 WindowNumber = blockNumber + 1
@@ -457,29 +524,29 @@ public sealed class $className {
         var windowStart = sessionStart.AddHours(currentBlock * 5);
         var windowEnd = windowStart.AddHours(5);
         
-        return new() {
+        return new SessionWindow {
             WindowStart = windowStart,
             WindowEnd = windowEnd,
             WindowNumber = currentBlock + 1
         };
     }
 
-    public record SessionWindow {
+    public class SessionWindow {
         public DateTime WindowStart { get; set; }
         public DateTime WindowEnd { get; set; }
         public int WindowNumber { get; set; }
-        public TimeSpan TimeRemaining => WindowEnd.Subtract(DateTime.Now);
-        public string WindowDisplay => $"{WindowStart:HH:mm}-{WindowEnd:HH:mm}";
+        public TimeSpan TimeRemaining { get { return WindowEnd.Subtract(DateTime.Now); } }
+        public string WindowDisplay { get { return WindowStart.ToString("HH:mm") + "-" + WindowEnd.ToString("HH:mm"); } }
     }
 
     public static TokenDepletion CalculateTokenDepletion(int currentTokens, double tokensPerMinute, int tokenLimit) {
         var tokensRemaining = tokenLimit - currentTokens;
         
         if (tokensPerMinute <= 0)
-            return new() { ProjectedDepletionDisplay = "No burn rate data", TokensRemaining = tokensRemaining };
+            return new TokenDepletion { ProjectedDepletionDisplay = "No burn rate data", TokensRemaining = tokensRemaining };
         
         if (tokensRemaining <= 0)
-            return new() {
+            return new TokenDepletion {
                 ProjectedDepletionTime = DateTime.Now,
                 ProjectedDepletionDisplay = "EXCEEDED",
                 TokensRemaining = tokensRemaining,
@@ -489,13 +556,16 @@ public sealed class $className {
         var minutesToDepletion = tokensRemaining / tokensPerMinute;
         var depletionTime = DateTime.Now.AddMinutes(minutesToDepletion);
         
-        var depletionDisplay = minutesToDepletion switch {
-            < 60 => $"{Math.Round(minutesToDepletion, 1)}min",
-            < 1440 => $"{(int)Math.Floor(minutesToDepletion / 60)}h{(int)Math.Round(minutesToDepletion % 60)}m",
-            _ => $"{(int)Math.Floor(minutesToDepletion / 1440)}d{(int)Math.Round((minutesToDepletion % 1440) / 60)}h"
-        };
+        string depletionDisplay;
+        if (minutesToDepletion < 60) {
+            depletionDisplay = Math.Round(minutesToDepletion, 1) + "min";
+        } else if (minutesToDepletion < 1440) {
+            depletionDisplay = ((int)Math.Floor(minutesToDepletion / 60)) + "h" + ((int)Math.Round(minutesToDepletion % 60)) + "m";
+        } else {
+            depletionDisplay = ((int)Math.Floor(minutesToDepletion / 1440)) + "d" + ((int)Math.Round((minutesToDepletion % 1440) / 60)) + "h";
+        }
         
-        return new() {
+        return new TokenDepletion {
             ProjectedDepletionTime = depletionTime,
             ProjectedDepletionDisplay = depletionDisplay,
             TokensRemaining = tokensRemaining,
@@ -503,11 +573,15 @@ public sealed class $className {
         };
     }
 
-    public record TokenDepletion {
+    public class TokenDepletion {
         public DateTime? ProjectedDepletionTime { get; set; }
-        public string ProjectedDepletionDisplay { get; set; } = "";
+        public string ProjectedDepletionDisplay { get; set; }
         public int TokensRemaining { get; set; }
         public double? MinutesToDepletion { get; set; }
+        
+        public TokenDepletion() {
+            ProjectedDepletionDisplay = "";
+        }
     }
     
     public static DateTime FindBillingWindowStart(string logFilePath) {
@@ -550,9 +624,9 @@ public sealed class $className {
         } catch { return RoundDownToHour(DateTime.Now); }
     }
     
-    static (bool isRateLimited, DateTime? resetTime, string message, int? rateLimitHours) CheckRateLimitStatus(string logFilePath) {
+    static RateLimitCheckResult CheckRateLimitStatus(string logFilePath) {
         try {
-            if (!File.Exists(logFilePath)) return (false, null, "", null);
+            if (!File.Exists(logFilePath)) return new RateLimitCheckResult(false, null, "", null);
             
             var lines = File.ReadAllLines(logFilePath);
             DateTime? mostRecentResetTime = null;
@@ -618,22 +692,23 @@ public sealed class $className {
                 var now = DateTime.Now;
                 
                 // If current time is past reset time, rate limit has expired
-                if (now >= mostRecentResetTime.Value) {
-                    return (false, null, "", null);
-                }
+                if (now >= mostRecentResetTime.Value)
+                    return new RateLimitCheckResult(false, null, "", null);
                 
                 // If we're before the reset time, we're still rate limited
                 // (Successful messages don't clear rate limits - they could be from other devices)
-                return (true, mostRecentResetTime.Value, rateLimitMessage, rateLimitHours);
+                return new RateLimitCheckResult(true, mostRecentResetTime.Value, rateLimitMessage, rateLimitHours);
             }
             
-            return (false, null, "", null);
+            return new RateLimitCheckResult(false, null, "", null);
         } catch { 
-            return (false, null, "", null); 
+            return new RateLimitCheckResult(false, null, "", null); 
         }
     }
     
-    static DateTime RoundDownToHour(DateTime dateTime) => new DateTime(dateTime.Year, dateTime.Month, dateTime.Day, dateTime.Hour, 0, 0, dateTime.Kind);
+    static DateTime RoundDownToHour(DateTime dateTime) { 
+        return new DateTime(dateTime.Year, dateTime.Month, dateTime.Day, dateTime.Hour, 0, 0, dateTime.Kind); 
+    }
 
     static List<ClaudeProcess> GetClaudeProcesses() {
         var claudeProcesses = new List<ClaudeProcess>();
@@ -643,7 +718,7 @@ public sealed class $className {
             
             foreach (var process in processes) {
                 try {
-                    var wmiQuery = $"SELECT CommandLine FROM Win32_Process WHERE ProcessId = {process.Id}";
+                    var wmiQuery = "SELECT CommandLine FROM Win32_Process WHERE ProcessId = " + process.Id;
                     using var searcher = new ManagementObjectSearcher(wmiQuery);
                     using var collection = searcher.Get();
                     
@@ -674,7 +749,7 @@ public sealed class $className {
                             discoveredConfigs.TryAdd(configPath, new(friendlyName, "Cyan", configPath));
                             var consoleWindow = GetProcessConsoleWindow(process.Id);
                             
-                            claudeProcesses.Add(new() {
+                            claudeProcesses.Add(new ClaudeProcess {
                                 ProcessId = process.Id,
                                 ProcessName = process.ProcessName,
                                 CommandLine = commandLine,
@@ -702,14 +777,14 @@ public sealed class $className {
         try {
             var hProc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, processId);
             if (hProc == IntPtr.Zero) {
-                Console.WriteLine($"Debug: Failed to open process {processId}");
+                Console.WriteLine("Debug: Failed to open process " + processId);
                 return result;
             }
 
             var pbi = new PROCESS_BASIC_INFORMATION();
             var status = NtQueryInformationProcess(hProc, 0, ref pbi, (uint)Marshal.SizeOf(pbi), out var retLen);
             if (status != 0) {
-                Console.WriteLine($"Debug: NtQueryInformationProcess failed for {processId}, status: {status}");
+                Console.WriteLine("Debug: NtQueryInformationProcess failed for " + processId + ", status: " + status);
                 CloseHandle(hProc);
                 return result;
             }
@@ -717,7 +792,7 @@ public sealed class $className {
             // Read PEB (just enough to get ProcessParameters)
             var peb = new byte[IntPtr.Size * 6];
             if (!ReadProcessMemory(hProc, pbi.PebBaseAddress, peb, peb.Length, out var bytesRead)) {
-                Console.WriteLine($"Debug: Failed to read PEB for process {processId}");
+                Console.WriteLine("Debug: Failed to read PEB for process " + processId);
                 CloseHandle(hProc);
                 return result;
             }
@@ -730,7 +805,7 @@ public sealed class $className {
             var size = Marshal.SizeOf(typeof(RTL_USER_PROCESS_PARAMETERS));
             var ruppBytes = new byte[size];
             if (!ReadProcessMemory(hProc, procParamsAddr, ruppBytes, size, out bytesRead)) {
-                Console.WriteLine($"Debug: Failed to read process parameters for {processId}");
+                Console.WriteLine("Debug: Failed to read process parameters for " + processId);
                 CloseHandle(hProc);
                 return result;
             }
@@ -742,7 +817,7 @@ public sealed class $className {
             // Read environment block
             var envBlock = new byte[64 * 1024];
             if (!ReadProcessMemory(hProc, rupp.Environment, envBlock, envBlock.Length, out bytesRead)) {
-                Console.WriteLine($"Debug: Failed to read environment block for {processId}");
+                Console.WriteLine("Debug: Failed to read environment block for " + processId);
                 CloseHandle(hProc);
                 return result;
             }
@@ -770,7 +845,7 @@ public sealed class $className {
             }
             
         } catch (Exception ex) {
-            Console.WriteLine($"Debug: GetEnvironmentVariables error: {ex.Message}");
+            Console.WriteLine("Debug: GetEnvironmentVariables error: " + ex.Message);
         }
 
         return result;
@@ -798,7 +873,7 @@ public sealed class $className {
                         GetClassName(hWnd, className, className.Capacity);
                         var classNameStr = className.ToString();
                         
-                        if (classNameStr is "ConsoleWindowClass" or "PseudoConsoleWindow")
+                        if (classNameStr == "ConsoleWindowClass" || classNameStr == "PseudoConsoleWindow")
                             windows.Add(hWnd);
                     }
                 } catch { }
@@ -808,14 +883,14 @@ public sealed class $className {
             
             return windows.FirstOrDefault();
         } catch (Exception ex) {
-            Console.WriteLine($"Debug: GetProcessConsoleWindow error: {ex.Message}");
+            Console.WriteLine("Debug: GetProcessConsoleWindow error: " + ex.Message);
             return null;
         }
     }
 
     static void InitializeConfigStats(string configPath) {
-        sessionStats.TryAdd(configPath, new() { SessionStart = DateTime.Now });
-        rateLimitStates.TryAdd(configPath, new());
+        sessionStats.TryAdd(configPath, new SessionStats { SessionStart = DateTime.Now });
+        rateLimitStates.TryAdd(configPath, new RateLimitState());
     }
     
     static void UpdateRateLimitStatus(string logFilePath, string configKey) {
@@ -823,7 +898,11 @@ public sealed class $className {
         
         try {
             var rateLimitState = rateLimitStates[configKey];
-            var (isRateLimited, resetTime, message, rateLimitHours) = CheckRateLimitStatus(logFilePath);
+            var result = CheckRateLimitStatus(logFilePath);
+            var isRateLimited = result.IsRateLimited;
+            var resetTime = result.ResetTime;
+            var message = result.Message;
+            var rateLimitHours = result.RateLimitHours;
             
             rateLimitState.IsRateLimited = isRateLimited;
             rateLimitState.ResetTime = resetTime;
@@ -844,7 +923,6 @@ public sealed class $className {
             
         try {
             InitializeConfigStats(configPath);
-            
             if (sessionStats.TryGetValue(configPath, out var stats)) {
                 var actualSessionStart = FindBillingWindowStart(logFile);
                 stats.SessionStart = actualSessionStart;
@@ -873,7 +951,7 @@ public sealed class $className {
 
     static StatusInfo UpdateProcessStats(ClaudeProcess process) {
         var configPath = process.ConfigPath;
-        var processKey = $"Process_{process.ProcessId}";
+        var processKey = "Process_" + process.ProcessId;
         var mostRecentJsonl = GetMostRecentJsonlForProcess(configPath, process);
         if (string.IsNullOrEmpty(mostRecentJsonl)) {
             return null;
@@ -881,13 +959,13 @@ public sealed class $className {
             
         try {
             if (!sessionStats.ContainsKey(processKey)) {
-                sessionStats[processKey] = new() {
+                sessionStats[processKey] = new SessionStats {
                     SessionStart = DateTime.Now.AddHours(-1),
                     WorkingDirectory = process.WorkingDirectory
                 };
             }
             
-            rateLimitStates.TryAdd(processKey, new());
+            rateLimitStates.TryAdd(processKey, new RateLimitState());
             
             var actualSessionStart = FindBillingWindowStart(mostRecentJsonl);
             sessionStats[processKey].SessionStart = actualSessionStart;
@@ -933,38 +1011,37 @@ public sealed class $className {
                 if (string.IsNullOrWhiteSpace(line)) continue;
                 
                 try {
-                    using var doc = JsonDocument.Parse(line);
-                    var root = doc.RootElement;
-                    
                     // Extract working directory from cwd field
-                    if (!cwdExtracted && root.TryGetProperty("cwd", out var cwdElement)) {
-                        var cwd = cwdElement.GetString();
-                        if (!string.IsNullOrEmpty(cwd) && Directory.Exists(cwd)) {
-                            stats.WorkingDirectory = cwd;
-                            cwdExtracted = true;
+                    if (!cwdExtracted) {
+                        var cwdMatch = Regex.Match(line, "\"cwd\"\\s*:\\s*\"([^\"]+)\"");
+                        if (cwdMatch.Success) {
+                            var cwd = cwdMatch.Groups[1].Value;
+                            if (!string.IsNullOrEmpty(cwd) && Directory.Exists(cwd)) {
+                                stats.WorkingDirectory = cwd;
+                                cwdExtracted = true;
+                            }
                         }
                     }
                     
                     // Look for usage data in message.usage
-                    if (root.TryGetProperty("message", out var messageElement) && 
-                        messageElement.TryGetProperty("usage", out var usageElement)) {
-                        
+                    if (line.Contains("\"usage\"") && line.Contains("\"input_tokens\"")) {
                         // Extract model name
                         string model = "unknown";
-                        if (messageElement.TryGetProperty("model", out var modelElement)) {
-                            model = modelElement.GetString() ?? "unknown";
+                        var modelMatch = Regex.Match(line, "\"model\"\\s*:\\s*\"([^\"]+)\"");
+                        if (modelMatch.Success) {
+                            model = modelMatch.Groups[1].Value;
                         }
                         
-                        // Extract token counts with safe conversion
-                        var inputTokens = GetJsonIntValue(usageElement, "input_tokens");
-                        var outputTokens = GetJsonIntValue(usageElement, "output_tokens");
-                        var cacheCreation = GetJsonIntValue(usageElement, "cache_creation_input_tokens");
-                        var cacheRead = GetJsonIntValue(usageElement, "cache_read_input_tokens");
+                        // Extract token counts with regex parsing
+                        var inputTokens = GetJsonIntValueRegex(line, "input_tokens");
+                        var outputTokens = GetJsonIntValueRegex(line, "output_tokens");
+                        var cacheCreation = GetJsonIntValueRegex(line, "cache_creation_input_tokens");
+                        var cacheRead = GetJsonIntValueRegex(line, "cache_read_input_tokens");
                         
                         // Only process if we have valid token counts
                         if (inputTokens > 0 || outputTokens > 0) {
                             if (!stats.ModelBreakdown.ContainsKey(model))
-                                stats.ModelBreakdown[model] = new();
+                                stats.ModelBreakdown[model] = new ModelUsage();
                             
                             var modelUsage = stats.ModelBreakdown[model];
                             modelUsage.InputTokens += inputTokens;
@@ -985,20 +1062,20 @@ public sealed class $className {
                         }
                     }
                 } catch (Exception ex) {
-                    Console.WriteLine($"Debug: JSON parsing error on line: {ex.Message}");
+                    Console.WriteLine("Debug: JSON parsing error on line: " + ex.Message);
                     // Continue processing other lines even if one line has invalid JSON
                 }
             }
         } catch (Exception ex) {
-            Console.WriteLine($"Debug: ParseJsonlFile error: {ex.Message}");
+            Console.WriteLine("Debug: ParseJsonlFile error: " + ex.Message);
         }
     }
     
-    static int GetJsonIntValue(JsonElement element, string propertyName) {
-        if (element.TryGetProperty(propertyName, out var propElement)) {
-            if (propElement.ValueKind == JsonValueKind.Number && propElement.TryGetInt32(out var intValue)) {
-                return intValue;
-            }
+    static int GetJsonIntValueRegex(string jsonLine, string propertyName) {
+        var pattern = "\"" + propertyName + "\"\\s*:\\s*(\\d+)";
+        var match = Regex.Match(jsonLine, pattern);
+        if (match.Success && int.TryParse(match.Groups[1].Value, out var value)) {
+            return value;
         }
         return 0;
     }
@@ -1026,7 +1103,8 @@ public sealed class $className {
             Thread.Sleep(100);
             SendKeys.SendWait("{ENTER}");
             
-            if (sessionStats.TryGetValue(configPath, out var stats)) {
+            SessionStats stats;
+            if (sessionStats.TryGetValue(configPath, out stats)) {
                 ++stats.ContinuesSent;
                 stats.LastContinueSent = DateTime.Now;
             }
@@ -1041,20 +1119,20 @@ public sealed class $className {
         
         var currentTime = DateTime.Now;
         
-        WriteLineAnsi($"{GREEN}============================================{RESET}");
-        WriteLineAnsi($"{GREEN}  :robot:  ULTIMATE CLAUDE BACKGROUND MONITOR  :rocket:  {RESET}");
-        WriteLineAnsi($"{GREEN}============================================{RESET}");
-        WriteLineAnsi($"{YELLOW}:clock: Current Time: {currentTime:yyyy-MM-dd HH:mm:ss}{RESET}");
+        WriteLineAnsi(GREEN + "============================================" + RESET);
+        WriteLineAnsi(GREEN + "  :robot:  ULTIMATE CLAUDE BACKGROUND MONITOR  :rocket:  " + RESET);
+        WriteLineAnsi(GREEN + "============================================" + RESET);
+        WriteLineAnsi(YELLOW + ":clock: Current Time: " + currentTime.ToString("yyyy-MM-dd HH:mm:ss") + RESET);
         WriteLineAnsi("");
         
         if (claudeProcesses.Count == 0) {
-            WriteLineAnsi($"{RED}:cross: No Claude processes found! Waiting for Claude Code to start...{RESET}");
+            WriteLineAnsi(RED + ":cross: No Claude processes found! Waiting for Claude Code to start..." + RESET);
             WriteLineAnsi("");
-            WriteLineAnsi($"{CYAN}+--- SUMMARY ------------------------------------------------------------------+{RESET}");
-            WriteLineAnsi($"{CYAN}| {YELLOW}:hourglass: WAIT{CYAN} | Scanning for Claude Code processes... Press Ctrl+C to stop{WHITE} |{RESET}");
-            WriteLineAnsi($"{CYAN}+------------------------------------------------------------------------------+{RESET}");
+            WriteLineAnsi(CYAN + "+--- SUMMARY ------------------------------------------------------------------+" + RESET);
+            WriteLineAnsi(CYAN + "| " + YELLOW + ":hourglass: WAIT" + CYAN + " | Scanning for Claude Code processes... Press Ctrl+C to stop" + WHITE + " |" + RESET);
+            WriteLineAnsi(CYAN + "+------------------------------------------------------------------------------+" + RESET);
             WriteLineAnsi("");
-            WriteLineAnsi($"{RED}:warning: Monitoring continues - Press Ctrl+C to stop...{RESET}");
+            WriteLineAnsi(RED + ":warning: Monitoring continues - Press Ctrl+C to stop..." + RESET);
             return;
         }
         
@@ -1068,13 +1146,13 @@ public sealed class $className {
             if (string.IsNullOrEmpty(baseName)) baseName = "Unknown";
             
             var processCount = claudeProcesses.Count(p => p.ConfigPath == configPath);
-            var configName = processCount > 1 ? $"{baseName} #{instanceNumber}" : baseName;
+            var configName = processCount > 1 ? baseName + " #" + instanceNumber : baseName;
             
-            var processKey = $"Process_{process.ProcessId}";
+            var processKey = "Process_" + process.ProcessId;
             var status = processStatuses.GetValueOrDefault(processKey);
             var stats = sessionStats.GetValueOrDefault(processKey);
             
-            ShowInstanceStatusBar(configName, configPath, new() { process }, status, stats, currentTime);
+            ShowInstanceStatusBar(configName, configPath, new List<ClaudeProcess> { process }, status, stats, currentTime);
             ++instanceNumber;
         }
         
@@ -1083,21 +1161,21 @@ public sealed class $className {
         var totalRequests = sessionStats.Values.Sum(s => s.TotalRequests);
         var totalContinues = sessionStats.Values.Sum(s => s.ContinuesSent);
         
-        WriteLineAnsi($"{GREEN}+--- SUMMARY ------------------------------------------------------------------+{RESET}");
-        var summaryText = $":computer: Configs: {discoveredConfigs.Count} | :gear: Processes: {claudeProcesses.Count} | :chart: Total: {totalTokens:N0} tokens | :money: ${totalCost:F4} | :arrow: {totalContinues} continues";
+        WriteLineAnsi(GREEN + "+--- SUMMARY ------------------------------------------------------------------+" + RESET);
+        var summaryText = ":computer: Configs: " + discoveredConfigs.Count + " | :gear: Processes: " + claudeProcesses.Count + " | :chart: Total: " + totalTokens.ToString("N0") + " tokens | :money: $" + totalCost.ToString("F4") + " | :arrow: " + totalContinues + " continues";
         
         var textLength = summaryText.Length;
         var emojiSet = unicodeSupported == true ? emojisUnicode : emojisAscii;
         foreach (var emoji in emojiSet) {
-            var placeholder = $":{emoji.Key}:";
+            var placeholder = ":" + emoji.Key + ":";
             var count = (summaryText.Length - summaryText.Replace(placeholder, "").Length) / placeholder.Length;
             textLength -= count * (placeholder.Length - emoji.Value.Length);
         }
         
-        WriteLineAnsi($"| {WHITE}{summaryText}{GREEN}{new string(' ', Math.Max(0, 77 - textLength))}|{RESET}");
-        WriteLineAnsi($"{GREEN}+------------------------------------------------------------------------------+{RESET}");
+        WriteLineAnsi("| " + WHITE + summaryText + GREEN + new string(' ', Math.Max(0, 77 - textLength)) + "|" + RESET);
+        WriteLineAnsi(GREEN + "+------------------------------------------------------------------------------+" + RESET);
         WriteLineAnsi("");
-        WriteLineAnsi($"{RED}:warning: Press Ctrl+C to stop monitoring...{RESET}");
+        WriteLineAnsi(RED + ":warning: Press Ctrl+C to stop monitoring..." + RESET);
     }
 
     static void ShowInstanceStatusBar(string configName, string configPath, List<ClaudeProcess> processes, 
@@ -1164,8 +1242,8 @@ public sealed class $className {
         }
         
         var uptime = (currentTime - processInfo.StartTime).TotalMinutes;
-        var uptimeStr = uptime < 60 ? $"{Math.Round(uptime, 1)}min" : $"{Math.Round(uptime / 60, 1)}h";
-        var projectText = $"{workingDir} [{claudeConfigDir}] (PID:{processInfo.ProcessId}, {processInfo.WorkingSet}MB) :clock: {uptimeStr}";
+        var uptimeStr = uptime < 60 ? Math.Round(uptime, 1) + "min" : Math.Round(uptime / 60, 1) + "h";
+        var projectText = workingDir + " [" + claudeConfigDir + "] (PID:" + processInfo.ProcessId + ", " + processInfo.WorkingSet + "MB) :clock: " + uptimeStr;
         
         var modelText = "No Model";
         if (stats?.ModelBreakdown != null && stats.ModelBreakdown.Count > 0) {
@@ -1173,7 +1251,7 @@ public sealed class $className {
                 var modelName = stats.ModelBreakdown.Keys.First();
                 modelText = modelName.Replace("claude-", "").Replace("-20", "");
             } else {
-                modelText = $"{stats.ModelBreakdown.Count} models";
+                modelText = stats.ModelBreakdown.Count + " models";
             }
         }
         
@@ -1182,12 +1260,12 @@ public sealed class $className {
             var totalTokens = stats.TotalInputTokens + stats.TotalOutputTokens;
             if (totalTokens > 0) {
                 var sessionDuration = (currentTime - stats.SessionStart).TotalMinutes;
-                usageText = $"{totalTokens:N0} tokens | ${stats.TotalCost:F3} | {sessionDuration:F1}min";
+                usageText = totalTokens.ToString("N0") + " tokens | $" + stats.TotalCost.ToString("F3") + " | " + sessionDuration.ToString("F1") + "min";
                 
                 if (stats.BurnRateTokensPerMinute > 0) {
-                    usageText += $" | {stats.BurnRateTokensPerMinute:F1}/min";
+                    usageText += " | " + stats.BurnRateTokensPerMinute.ToString("F1") + "/min";
                     if (stats.ProjectedTotalCost > 0)
-                        usageText += $" -> ${stats.ProjectedTotalCost:F2}";
+                        usageText += " -> $" + stats.ProjectedTotalCost.ToString("F2");
                 }
             }
         }
@@ -1201,25 +1279,25 @@ public sealed class $className {
                 // Temporary fix: if we have reset time but no hours, assume 5 hours (most common)
                 var effectiveRateLimitHours = status?.RateLimitHours ?? (status?.ResetTime.HasValue == true ? 5 : (int?)null);
                 var sessionWindow = CalculateSessionWindow(stats.SessionStart, currentTime, status?.ResetTime, effectiveRateLimitHours);
-                windowText = $"{sessionWindow.WindowDisplay} | Window {sessionWindow.WindowNumber}";
+                windowText = sessionWindow.WindowDisplay + " | Window " + sessionWindow.WindowNumber;
                 
                 var timeRemaining = sessionWindow.TimeRemaining;
                 if (timeRemaining.TotalMinutes > 0) {
                     var timeRemainingText = timeRemaining.TotalMinutes < 60 ? 
-                        $"{Math.Round(timeRemaining.TotalMinutes, 1)}min left" :
-                        $"{Math.Floor(timeRemaining.TotalHours)}h{timeRemaining.Minutes}m left";
-                    windowText += $" :clock: {timeRemainingText}";
+                        Math.Round(timeRemaining.TotalMinutes, 1) + "min left" :
+                        Math.Floor(timeRemaining.TotalHours) + "h" + timeRemaining.Minutes + "m left";
+                    windowText += " :clock: " + timeRemainingText;
                 }
                 
                 var currentTokens = stats.TotalInputTokens + stats.TotalOutputTokens;
                 tokenDepletion = CalculateTokenDepletion(currentTokens, stats.BurnRateTokensPerMinute, 150000);
             } catch (Exception ex) {
-                windowText = $"Window calc error: {ex.Message}";
+                windowText = "Window calc error: " + ex.Message;
                 windowColor = RED;
             }
             
             if (tokenDepletion?.ProjectedDepletionDisplay != "No burn rate data") {
-                windowText += $" :target: Tokens out in: {tokenDepletion.ProjectedDepletionDisplay}";
+                windowText += " :target: Tokens out in: " + tokenDepletion.ProjectedDepletionDisplay;
                 
                 if (tokenDepletion.MinutesToDepletion.HasValue) {
                     if (tokenDepletion.MinutesToDepletion < 60)
@@ -1230,17 +1308,17 @@ public sealed class $className {
                         windowColor = BRIGHT_BLUE;
                 }
             } else {
-                windowText += $" :chart: {tokenDepletion?.TokensRemaining:N0} tokens left";
+                windowText += " :chart: " + tokenDepletion?.TokensRemaining.ToString("N0") + " tokens left";
             }
         }
         
-        WriteLineAnsi($"{GRAY}+------------------------------------------------------------------------------+{RESET}");
-        WriteLineAnsi($"| {statusColor}{statusEmoji} {statusText,-74}{WHITE} |{RESET}");
-        WriteLineAnsi($"| {MAGENTA}:computer: {projectText,-78}{WHITE} |{RESET}");
-        WriteLineAnsi($"| {CYAN}:robot: {modelText,-73}{WHITE} |{RESET}");
-        WriteLineAnsi($"| {GREEN}:money: {usageText,-73}{WHITE} |{RESET}");
-        WriteLineAnsi($"| {windowColor}:hourglass: {windowText,-83}{WHITE} |{RESET}");
-        WriteLineAnsi($"{GRAY}+------------------------------------------------------------------------------+{RESET}");
+        WriteLineAnsi(GRAY + "+------------------------------------------------------------------------------+" + RESET);
+        WriteLineAnsi("| " + statusColor + statusEmoji + " " + statusText.PadRight(74) + WHITE + " |" + RESET);
+        WriteLineAnsi("| " + MAGENTA + ":computer: " + projectText.PadRight(78) + WHITE + " |" + RESET);
+        WriteLineAnsi("| " + CYAN + ":robot: " + modelText.PadRight(73) + WHITE + " |" + RESET);
+        WriteLineAnsi("| " + GREEN + ":money: " + usageText.PadRight(73) + WHITE + " |" + RESET);
+        WriteLineAnsi("| " + windowColor + ":hourglass: " + windowText.PadRight(78) + WHITE + " |" + RESET);
+        WriteLineAnsi(GRAY + "+------------------------------------------------------------------------------+" + RESET);
         WriteLineAnsi("");
     }
 }
