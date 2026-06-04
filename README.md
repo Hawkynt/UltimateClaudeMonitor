@@ -1,9 +1,20 @@
 # 🖥️ Claude Ultimate Background Monitor
 
-![License](https://img.shields.io/github/license/Hawkynt/UltimateClaudeMonitor)
-![Language](https://img.shields.io/github/languages/top/Hawkynt/UltimateClaudeMonitor?color=purple)
-[![Last Commit](https://img.shields.io/github/last-commit/Hawkynt/UltimateClaudeMonitor?branch=main)![Activity](https://img.shields.io/github/commit-activity/y/Hawkynt/UltimateClaudeMonitor?branch=main)](https://github.com/Hawkynt/UltimateClaudeMonitor/commits/main)
-[![GitHub release](https://img.shields.io/github/v/release/Hawkynt/UltimateClaudeMonitor)](https://github.com/Hawkynt/UltimateClaudeMonitor/releases/latest)
+[![License](https://img.shields.io/github/license/Hawkynt/UltimateClaudeMonitor)](https://github.com/Hawkynt/UltimateClaudeMonitor/blob/main/LICENSE)
+[![Language](https://img.shields.io/github/languages/top/Hawkynt/UltimateClaudeMonitor?color=8957D5)](https://github.com/Hawkynt/UltimateClaudeMonitor)
+
+[![CI](https://github.com/Hawkynt/UltimateClaudeMonitor/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Hawkynt/UltimateClaudeMonitor/actions/workflows/ci.yml)
+![Last Commit](https://img.shields.io/github/last-commit/Hawkynt/UltimateClaudeMonitor?branch=main)
+![Activity](https://img.shields.io/github/commit-activity/m/Hawkynt/UltimateClaudeMonitor)
+
+[![Stars](https://img.shields.io/github/stars/Hawkynt/UltimateClaudeMonitor?color=FFD700)](https://github.com/Hawkynt/UltimateClaudeMonitor/stargazers)
+[![Forks](https://img.shields.io/github/forks/Hawkynt/UltimateClaudeMonitor?color=008080)](https://github.com/Hawkynt/UltimateClaudeMonitor/network/members)
+[![Issues](https://img.shields.io/github/issues/Hawkynt/UltimateClaudeMonitor)](https://github.com/Hawkynt/UltimateClaudeMonitor/issues)
+![Code Size](https://img.shields.io/github/languages/code-size/Hawkynt/UltimateClaudeMonitor?color=4CAF50)
+![Repo Size](https://img.shields.io/github/repo-size/Hawkynt/UltimateClaudeMonitor?color=FF9800)
+
+[![Release](https://img.shields.io/github/v/release/Hawkynt/UltimateClaudeMonitor?sort=semver)](https://github.com/Hawkynt/UltimateClaudeMonitor/releases/latest)
+[![Nightly](https://img.shields.io/github/v/release/Hawkynt/UltimateClaudeMonitor?include_prereleases=true&sort=date&label=nightly&color=FF9800)](https://github.com/Hawkynt/UltimateClaudeMonitor/releases)
 [![Downloads](https://img.shields.io/github/downloads/Hawkynt/UltimateClaudeMonitor/total)](https://github.com/Hawkynt/UltimateClaudeMonitor/releases)
 
 A comprehensive real-time monitoring system for Claude Code instances that tracks token usage, costs, burn rates, and provides intelligent forecasting across multiple processes and accounts.
