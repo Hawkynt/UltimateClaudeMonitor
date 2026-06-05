@@ -17,7 +17,7 @@
 [![Nightly](https://img.shields.io/github/v/release/Hawkynt/UltimateClaudeMonitor?include_prereleases=true&sort=date&label=nightly&color=FF9800)](https://github.com/Hawkynt/UltimateClaudeMonitor/releases)
 [![Downloads](https://img.shields.io/github/downloads/Hawkynt/UltimateClaudeMonitor/total)](https://github.com/Hawkynt/UltimateClaudeMonitor/releases)
 
-A comprehensive real-time monitoring system for Claude Code instances that tracks token usage, costs, burn rates, and provides intelligent forecasting across multiple processes and accounts.
+> A real-time monitoring system for Claude Code instances that auto-discovers every running process and tracks token usage, costs and burn rates with intelligent forecasting — account-aware, so shared token limits across processes are respected and rate-limit warnings come early.
 
 ## 🎯 Purpose
 
@@ -34,7 +34,7 @@ The monitor uses a hybrid PowerShell/C# architecture:
 5. **Rate Limit Management**: Automatically detects rate limits and sends "continue" commands
 6. **Cross-Process Monitoring**: Provides account-level token tracking shared across all processes
 
-## 🔨 Build/Test/Run Guidelines
+## 🛠️ Build/Test/Run Guidelines
 
 ### Building
 ```powershell
@@ -134,7 +134,7 @@ The system requires no external test framework - it's designed to monitor live C
 - Per-process detailed statistics
 - ASCII/Unicode fallback for terminal compatibility
 
-## 🚀 Planned Features
+## 🚧 Planned Features
 
 ### 🔄 Enhanced Analytics
 - Weekly usage pattern analysis
@@ -196,3 +196,14 @@ The system requires no external test framework - it's designed to monitor live C
 - Windows 10/11 or Windows Server 2019+
 - Claude Code installed and configured
 - Access to `~/.claude/` directory and configuration files
+
+## ❤️ Support
+
+If this project saves you time or money, consider supporting its development:
+
+[![GitHub Sponsors](https://img.shields.io/badge/GitHub-Sponsor-EA4AAA?logo=githubsponsors)](https://github.com/sponsors/Hawkynt)
+[![PayPal](https://img.shields.io/badge/PayPal-Donate-00457C?logo=paypal)](https://www.paypal.me/hawkynt)
+
+## 📜 License
+
+Licensed under LGPL-3.0-or-later — see [LICENSE](LICENSE).
