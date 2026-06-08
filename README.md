@@ -14,7 +14,7 @@
 ![Repo Size](https://img.shields.io/github/repo-size/Hawkynt/UltimateClaudeMonitor?color=FF9800)
 
 [![Release](https://img.shields.io/github/v/release/Hawkynt/UltimateClaudeMonitor)](https://github.com/Hawkynt/UltimateClaudeMonitor/releases/latest)
-[![Nightly](https://img.shields.io/github/v/release/Hawkynt/UltimateClaudeMonitor?include_prereleases&sort=date&label=nightly&color=FF9800)](https://github.com/Hawkynt/UltimateClaudeMonitor/releases)
+[![Nightly](https://img.shields.io/github/v/release/Hawkynt/UltimateClaudeMonitor?include_prereleases&sort=date&filter=nightly-*&label=nightly&color=FF9800)](https://github.com/Hawkynt/UltimateClaudeMonitor/releases)
 [![Downloads](https://img.shields.io/github/downloads/Hawkynt/UltimateClaudeMonitor/total)](https://github.com/Hawkynt/UltimateClaudeMonitor/releases)
 
 > A real-time monitoring system for Claude Code instances that auto-discovers every running process and tracks token usage, costs and burn rates with intelligent forecasting — account-aware, so shared token limits across processes are respected and rate-limit warnings come early.
