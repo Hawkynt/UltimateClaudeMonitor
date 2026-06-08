@@ -13,7 +13,7 @@
 ![Code Size](https://img.shields.io/github/languages/code-size/Hawkynt/UltimateClaudeMonitor?color=4CAF50)
 ![Repo Size](https://img.shields.io/github/repo-size/Hawkynt/UltimateClaudeMonitor?color=FF9800)
 
-[![Release](https://img.shields.io/github/v/release/Hawkynt/UltimateClaudeMonitor?sort=semver)](https://github.com/Hawkynt/UltimateClaudeMonitor/releases/latest)
+[![Release](https://img.shields.io/github/v/release/Hawkynt/UltimateClaudeMonitor)](https://github.com/Hawkynt/UltimateClaudeMonitor/releases/latest)
 [![Nightly](https://img.shields.io/github/v/release/Hawkynt/UltimateClaudeMonitor?include_prereleases&sort=date&label=nightly&color=FF9800)](https://github.com/Hawkynt/UltimateClaudeMonitor/releases)
 [![Downloads](https://img.shields.io/github/downloads/Hawkynt/UltimateClaudeMonitor/total)](https://github.com/Hawkynt/UltimateClaudeMonitor/releases)
 
