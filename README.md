@@ -19,78 +19,18 @@
 
 > A real-time monitoring system for Claude Code instances that auto-discovers every running process and tracks token usage, costs and burn rates with intelligent forecasting — account-aware, so shared token limits across processes are respected and rate-limit warnings come early.
 
-## 🎯 Purpose
+## 🧭 Vision
 
-Claude Ultimate Background Monitor automatically discovers and monitors all running Claude Code processes, providing detailed analytics on token consumption, cost tracking, and usage forecasting. It features account-aware monitoring that respects shared token limits across processes and provides early warnings when approaching rate limits.
+Several long-running processes sharing one token budget is a situation where per-process numbers tell
+you almost nothing: the limit that matters is the account's, and by the time any single process looks
+expensive the budget is already gone. This monitor watches all of them at once, attributes usage to
+the account rather than the process, and forecasts the burn rate so the warning arrives while there
+is still something to do about it.
 
-## ⚙️ How it Works
+It discovers what is running rather than being told, because a monitor you have to configure is a
+monitor that will be out of date exactly when it matters.
 
-The monitor uses a hybrid PowerShell/C# architecture:
-
-1. **Process Discovery**: Uses WMI queries and Win32 APIs to detect `node.exe` processes running Claude Code
-2. **Account Detection**: Parses `.claude.json` configuration files to extract OAuth account information
-3. **Usage Tracking**: Analyzes JSONL log files to extract real-time token usage and costs
-4. **Statistical Analysis**: Calculates M5, H1, D1 averages with trend analysis and forecasting
-5. **Rate Limit Management**: Automatically detects rate limits and sends "continue" commands
-6. **Cross-Process Monitoring**: Provides account-level token tracking shared across all processes
-
-## 🛠️ Build/Test/Run Guidelines
-
-### Building
-```powershell
-# .NET compilation (optional, for development)
-dotnet build
-
-# PowerShell runtime compilation (recommended)
-Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
-.\ClaudeMonitor.ps1
-```
-
-### Running
-```powershell
-# Start monitoring (default mode)
-.\ClaudeMonitor.ps1
-
-# CLI commands
-.\ClaudeMonitor.ps1 report --days 7 --format table
-.\ClaudeMonitor.ps1 accounts
-.\ClaudeMonitor.ps1 --help
-```
-
-### Testing
-The system requires no external test framework - it's designed to monitor live Claude Code processes. Test by:
-1. Running Claude Code in different directories
-2. Observing real-time statistics and account detection
-3. Verifying accurate token counting and cost calculations
-
-## 🏗️ High-Level Structure and Architectural Patterns
-
-### Hybrid Architecture
-- **PowerShell Host**: Dynamic C# compilation with unique class names based on content hash
-- **Embedded C# Application**: Core monitoring logic with real-time statistics
-- **Win32 API Integration**: Direct process memory access and console interaction
-
-### Key Components
-
-#### Data Models
-- `AnthropicAccount`: Account-level tracking with 5-hour rate limit windows
-- `SessionInfo`: Per-process statistics with time series analysis
-- `ClaudeProcess`: Process metadata with console interaction capabilities
-- `TimeSeriesStats`: Statistical analysis with trends and forecasting
-
-#### Monitoring Engine
-- **Process Discovery**: WMI-based Claude Code detection
-- **Configuration Parsing**: `.claude.json` OAuth account extraction
-- **Log Analysis**: JSONL parsing with incremental updates
-- **Statistical Engine**: M5/H1/D1 averages with percentile calculations
-
-#### Account Management
-- **Type Detection**: Automatic detection of Free/Pro/Max/Enterprise accounts (still buggy)
-- **Token Limits**: Dynamic limits based on detected account type (50K-1M tokens)
-- **Cross-Process Sharing**: Account-wide token pools shared across instances
-- **Rate Limit Handling**: Intelligent window tracking with auto-continue
-
-## 📋 Full Feature Set
+## ✨ Features
 
 ### ✅ Real-Time Monitoring
 - Multi-process Claude Code discovery and tracking
@@ -134,6 +74,33 @@ The system requires no external test framework - it's designed to monitor live C
 - Per-process detailed statistics
 - ASCII/Unicode fallback for terminal compatibility
 
+## 📦 Installation
+
+Clone the repository; the monitor runs from source. A PowerShell runtime is required, and the .NET
+SDK only if you want to compile the optional native build — see [Building](#-building).
+
+## 🚀 Quick start
+
+```bash
+# Start monitoring; every running instance is discovered automatically
+./monitor.ps1
+```
+
+## 🎯 Purpose
+
+Claude Ultimate Background Monitor automatically discovers and monitors all running Claude Code processes, providing detailed analytics on token consumption, cost tracking, and usage forecasting. It features account-aware monitoring that respects shared token limits across processes and provides early warnings when approaching rate limits.
+
+## ⚙️ How it Works
+
+The monitor uses a hybrid PowerShell/C# architecture:
+
+1. **Process Discovery**: Uses WMI queries and Win32 APIs to detect `node.exe` processes running Claude Code
+2. **Account Detection**: Parses `.claude.json` configuration files to extract OAuth account information
+3. **Usage Tracking**: Analyzes JSONL log files to extract real-time token usage and costs
+4. **Statistical Analysis**: Calculates M5, H1, D1 averages with trend analysis and forecasting
+5. **Rate Limit Management**: Automatically detects rate limits and sends "continue" commands
+6. **Cross-Process Monitoring**: Provides account-level token tracking shared across all processes
+
 ## 🚧 Planned Features
 
 ### 🔄 Enhanced Analytics
@@ -160,7 +127,51 @@ The system requires no external test framework - it's designed to monitor live C
 - Multi-account resource optimization
 - Cost optimization recommendations
 
-## ⚠️ Known Bugs and Limitations
+## 🏗️ Architecture
+
+### Hybrid Architecture
+- **PowerShell Host**: Dynamic C# compilation with unique class names based on content hash
+- **Embedded C# Application**: Core monitoring logic with real-time statistics
+- **Win32 API Integration**: Direct process memory access and console interaction
+
+### Key Components
+
+#### Data Models
+- `AnthropicAccount`: Account-level tracking with 5-hour rate limit windows
+- `SessionInfo`: Per-process statistics with time series analysis
+- `ClaudeProcess`: Process metadata with console interaction capabilities
+- `TimeSeriesStats`: Statistical analysis with trends and forecasting
+
+#### Monitoring Engine
+- **Process Discovery**: WMI-based Claude Code detection
+- **Configuration Parsing**: `.claude.json` OAuth account extraction
+- **Log Analysis**: JSONL parsing with incremental updates
+- **Statistical Engine**: M5/H1/D1 averages with percentile calculations
+
+#### Account Management
+- **Type Detection**: Automatic detection of Free/Pro/Max/Enterprise accounts (still buggy)
+- **Token Limits**: Dynamic limits based on detected account type (50K-1M tokens)
+- **Cross-Process Sharing**: Account-wide token pools shared across instances
+- **Rate Limit Handling**: Intelligent window tracking with auto-continue
+
+## 🔌 Dependencies
+
+### .NET Runtime Dependencies
+- .NET 8.0 Windows Runtime
+- System.Management (WMI queries)
+- System.Text.Json (configuration and log parsing)
+- System.Windows.Forms (SendKeys for auto-continue)
+
+### PowerShell Requirements  
+- PowerShell Core 7+
+- Execution policy bypass for dynamic compilation
+
+### System Requirements
+- Windows 10/11 or Windows Server 2019+
+- Claude Code installed and configured
+- Access to `~/.claude/` directory and configuration files
+
+## ⚠️ Limitations
 
 ### Current Limitations
 - **PowerShell Nullable Annotations**: Add-Type doesn't support nullable reference types, causing warnings in PowerShell mode
@@ -180,22 +191,34 @@ The system requires no external test framework - it's designed to monitor live C
 - Very large JSONL files (>100MB) may cause memory pressure
 - Account type detection depends on available evidence in logs
 
-## 📦 Dependencies
+## 🛠️ Building
 
-### .NET Runtime Dependencies
-- .NET 8.0 Windows Runtime
-- System.Management (WMI queries)
-- System.Text.Json (configuration and log parsing)
-- System.Windows.Forms (SendKeys for auto-continue)
+### Building
+```powershell
+# .NET compilation (optional, for development)
+dotnet build
 
-### PowerShell Requirements  
-- PowerShell Core 7+
-- Execution policy bypass for dynamic compilation
+# PowerShell runtime compilation (recommended)
+Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
+.\ClaudeMonitor.ps1
+```
 
-### System Requirements
-- Windows 10/11 or Windows Server 2019+
-- Claude Code installed and configured
-- Access to `~/.claude/` directory and configuration files
+### Running
+```powershell
+# Start monitoring (default mode)
+.\ClaudeMonitor.ps1
+
+# CLI commands
+.\ClaudeMonitor.ps1 report --days 7 --format table
+.\ClaudeMonitor.ps1 accounts
+.\ClaudeMonitor.ps1 --help
+```
+
+### Testing
+The system requires no external test framework - it's designed to monitor live Claude Code processes. Test by:
+1. Running Claude Code in different directories
+2. Observing real-time statistics and account detection
+3. Verifying accurate token counting and cost calculations
 
 ## ❤️ Support
 
